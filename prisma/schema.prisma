@@ -1,0 +1,18 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Session {
+  sessionId String   @default("chb-bot")
+  key       String
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+
+  @@id([sessionId, key])
+  @@index([sessionId])
+}
