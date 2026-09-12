@@ -11,57 +11,60 @@ async function main() {
   logger.info('🔥 INICIANDO CHB IMPORT BOT (BAILEYS + NEON + RENDER) 🔥');
   logger.info('==================================================');
 
-  // 1. Validação de variáveis de ambiente e arquivos
-  try {
-    validateConfig();
-  } catch (err) {
-    logger.error(err.message);
-    process.exit(1);
-  }
-
-  // 2. Conexão com o banco de dados Neon via Prisma
-  try {
-    logger.info('Testando conexão com o banco de dados Neon PostgreSQL...');
-    await prisma.$connect();
-    logger.info('✅ Banco de Dados Neon conectado com sucesso!');
-  } catch (err) {
-    logger.error('❌ Falha ao conectar ao banco de dados Neon:', err.message);
-    process.exit(1);
-  }
-
-  // 3. Modo de simulação local rápida via CLI (--dry-run)
+  // 1. Modo de simulação local rápida via CLI (--dry-run)
   if (process.argv.includes('--dry-run')) {
     logger.info('🧪 Flag --dry-run detectada! Executando simulação sem inicializar o WhatsApp Web ou o servidor...');
-    await runAutomationWorkflow({ dryRun: true });
-    await prisma.$disconnect();
+    try {
+      validateConfig();
+      await runAutomationWorkflow({ dryRun: true });
+    } catch (err) {
+      logger.error('Erro na simulação dry-run:', err.message);
+    }
     return;
   }
 
-  // 4. Inicializa o Servidor Express (Essencial para o Render Web Service e Keep-Awake)
+  // 2. Inicializa o Servidor Express (Essencial para o Dashboard Web, Render e Keep-Awake)
   const app = createServer();
   const server = app.listen(config.server.port, () => {
     logger.info(`🌐 Servidor Express ativo na porta ${config.server.port}`);
     logger.info(`👉 Acesse o Dashboard em: http://localhost:${config.server.port}`);
   });
 
-  // 5. Inicializa o WhatsApp Baileys com persistência no Neon
+  // 3. Validação de variáveis de ambiente e arquivos
+  let isConfigured = false;
   try {
-    whatsappService.initialize().catch((err) => {
-      logger.error('Erro na conexão contínua do WhatsApp:', err.message);
-    });
+    validateConfig();
+    isConfigured = true;
   } catch (err) {
-    logger.error('Falha ao instanciar o Baileys:', err.message);
+    logger.warn(`⚠️ Configurações pendentes:\n   ${err.message}`);
+    logger.info('👉 O painel web está acessível para testes visuais. Para ativar o robô completo, configure o .env e credentials.json.');
   }
 
-  // 6. Inicia o agendador de tarefas periódicas
-  startScheduler();
+  // 4. Se configurado, conecta banco Neon, WhatsApp Baileys e Agendador Cron
+  if (isConfigured) {
+    try {
+      logger.info('Testando conexão com o banco de dados Neon PostgreSQL...');
+      await prisma.$connect();
+      logger.info('✅ Banco de Dados Neon conectado com sucesso!');
 
-  // 7. Se solicitado disparo imediato via CLI (--run-now)
-  if (process.argv.includes('--run-now')) {
-    logger.info('Flag --run-now detectada! Aguardando o bot ficar online para disparar...');
-    whatsappService.waitUntilOnline().then(async () => {
-      await runAutomationWorkflow({ dryRun: false });
-    });
+      // Inicializa o WhatsApp Baileys com persistência no Neon
+      whatsappService.initialize().catch((err) => {
+        logger.error('Erro na conexão contínua do WhatsApp:', err.message);
+      });
+
+      // Inicia o agendador de tarefas periódicas (12h e 14h)
+      startScheduler();
+
+      // Se solicitado disparo imediato via CLI (--run-now)
+      if (process.argv.includes('--run-now')) {
+        logger.info('Flag --run-now detectada! Aguardando o bot ficar online para disparar...');
+        whatsappService.waitUntilOnline().then(async () => {
+          await runAutomationWorkflow({ dryRun: false });
+        });
+      }
+    } catch (err) {
+      logger.error('❌ Falha ao conectar ao banco de dados Neon:', err.message);
+    }
   }
 
   // 8. Graceful Shutdown (Encerramento limpo)
@@ -69,7 +72,9 @@ async function main() {
     logger.info(`Sinal [${signal}] recebido. Desligando servidor e desconectando serviços...`);
     stopScheduler();
     server.close();
-    await prisma.$disconnect();
+    if (isConfigured) {
+      await prisma.$disconnect().catch(() => {});
+    }
     logger.info('Aplicação finalizada com segurança.');
     process.exit(0);
   };

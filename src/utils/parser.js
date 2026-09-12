@@ -1,6 +1,22 @@
 import path from 'path';
 
 /**
+ * Tabela de preços oficial da CHB IMPORT
+ */
+export const DEFAULT_PRICES = {
+  torcedor: 'R$ 149,90',
+  jogador: 'R$ 169,99',
+  retro: 'R$ 179,90',
+  streetwear: 'R$ 65,00',
+};
+
+export const PRICE_TABLE_TEXT = `💰 *Valores:*
+▫️ Camisa de Torcedor: *R$ 149,90*
+▫️ Camisa de Jogador: *R$ 169,99*
+▫️ Camisa Retrô: *R$ 179,90*
+▫️ Camisa Streetwear: *R$ 65,00*`;
+
+/**
  * Extrai informações do produto e preço a partir do nome do arquivo.
  * Exemplo de entrada: "Real-Madrid-Home-24-25_Torcedor_149,90.jpg" ou "borussia-26-27.jpg"
  *
@@ -15,7 +31,7 @@ export function parseFilename(filename) {
   const parts = baseName.includes('_') ? baseName.split('_') : baseName.split(' - ');
 
   let title = '';
-  let version = 'Torcedor';
+  let version = '';
   let price = '';
 
   if (parts.length >= 3) {
@@ -42,12 +58,39 @@ export function parseFilename(filename) {
     const explicitPriceMatch = baseName.match(/(?:R\$\s*(\d{1,4}(?:[.,]\d{2})?))|(?<!\d[-/])\b(\d{2,4}[.,]\d{2})\b/i);
     if (explicitPriceMatch) {
       price = formatPrice(explicitPriceMatch[1] || explicitPriceMatch[2]);
-    } else {
-      price = 'Consulte o valor';
     }
   }
 
-  const hasExplicitPrice = price !== 'Consulte o valor';
+  const hasExplicitPrice = Boolean(price);
+
+  // Identificação inteligente da versão/modelo caso não tenha sido especificado explicitamente
+  const searchContext = `${baseName} ${version}`.toLowerCase();
+  if (!version || version.toLowerCase() === 'torcedor') {
+    if (/\b(jogador|player)\b/i.test(searchContext)) {
+      version = 'Jogador';
+    } else if (/\b(retro|retrô|vintage)\b/i.test(searchContext)) {
+      version = 'Retrô';
+    } else if (/\b(streetwear|street)\b/i.test(searchContext)) {
+      version = 'Streetwear';
+    } else {
+      version = version || 'Torcedor';
+    }
+  }
+
+  // Se o preço não veio explícito no arquivo, usa a tabela de preços padrão conforme o modelo
+  if (!price) {
+    const vLower = version.toLowerCase();
+    if (vLower.includes('jogador') || vLower.includes('player')) {
+      price = DEFAULT_PRICES.jogador;
+    } else if (vLower.includes('retro') || vLower.includes('retrô') || vLower.includes('vintage')) {
+      price = DEFAULT_PRICES.retro;
+    } else if (vLower.includes('street')) {
+      price = DEFAULT_PRICES.streetwear;
+    } else {
+      price = DEFAULT_PRICES.torcedor;
+    }
+  }
+
   const summary = `Produto: ${title} | Modelo: ${version} | Preço: ${price}`;
 
   return {
@@ -56,7 +99,9 @@ export function parseFilename(filename) {
     price,
     hasExplicitPrice,
     rawName: baseName,
-    summary
+    summary,
+    priceTable: DEFAULT_PRICES,
+    priceTableText: PRICE_TABLE_TEXT,
   };
 }
 

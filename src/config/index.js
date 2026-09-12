@@ -62,8 +62,8 @@ export const config = {
     sessionId: process.env.WHATSAPP_SESSION_ID || 'chb-bot',
   },
   cron: {
-    // Roda por padrão 5 vezes ao dia: 09:00, 12:00, 15:00, 18:00, 21:00
-    schedule: process.env.CRON_SCHEDULE || '0 9,12,15,18,21 * * *',
+    // Roda 2 vezes ao dia: 12:00 e 14:00
+    schedule: process.env.CRON_SCHEDULE || '0 12,14 * * *',
     timezone: process.env.TIMEZONE || 'America/Sao_Paulo',
   }
 };

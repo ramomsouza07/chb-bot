@@ -161,7 +161,7 @@ export function createServer() {
           <span class="text-lg">⏰</span>
         </div>
         <p class="text-xl font-bold text-white mt-2 font-mono">${config.cron.schedule}</p>
-        <p class="text-xs text-slate-400 mt-1">5x ao dia (09h, 12h, 15h, 18h, 21h)</p>
+        <p class="text-xs text-slate-400 mt-1">2x ao dia (12h e 14h)</p>
       </div>
 
       <!-- Card 3: Banco de Dados -->

@@ -16,7 +16,7 @@ bot-whatsapp/
 │   ├── index.js                   # Ponto de entrada (Servidor, Baileys, Prisma e Cron)
 │   ├── server.js                  # Servidor Express + Dashboard Web com Tailwind CSS
 │   ├── workflow.js                # Orquestrador das 5 etapas de automação
-│   ├── scheduler.js               # Agendador node-cron (3 a 6 vezes ao dia)
+│   ├── scheduler.js               # Agendador node-cron (2 vezes ao dia: 12h e 14h)
 │   ├── checkSetup.js              # Diagnóstico completo de banco, Drive e IA
 │   ├── config/
 │   │   └── index.js               # Validação de variáveis (.env e credenciais Google)
@@ -131,7 +131,7 @@ Na aba **Environment** do seu Web Service no Render, adicione as variáveis:
 | `GEMINI_MODEL` | `gemini-3.5-flash-lite` |
 | `GOOGLE_DRIVE_FOLDER_ID` | `13CAQavdPhAAfQBNFxtifhUPgjkIYRtgi` |
 | `WHATSAPP_GROUP_NAME` | `CHB - Futebol e Streetwear` |
-| `CRON_SCHEDULE` | `0 9,12,15,18,21 * * *` |
+| `CRON_SCHEDULE` | `0 12,14 * * *` |
 | `TIMEZONE` | `America/Sao_Paulo` |
 | `GOOGLE_CREDENTIALS_JSON` | **Cole o conteúdo completo do seu `credentials.json` aqui!** |
 

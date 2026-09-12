@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node src/index.js",
+    "build": "prisma generate",
     "postinstall": "prisma generate",
     "db:push": "prisma db push",
     "test:dry-run": "node src/index.js --dry-run",
