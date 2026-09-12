@@ -11,14 +11,14 @@ export const DEFAULT_PRICES = {
 };
 
 export const PRICE_TABLE_TEXT = `💰 *Valores:*
-▫️ Camisa de Torcedor: *R$ 149,90*
-▫️ Camisa de Jogador: *R$ 169,99*
-▫️ Camisa Retrô: *R$ 179,90*
-▫️ Camisa Streetwear: *R$ 65,00*`;
+👕 Camisa Streetwear: *R$ 65,00*
+⚽ Camisa de Torcedor: *R$ 149,90*
+⚡ Camisa de Jogador: *R$ 169,99*
+🏆 Camisa Retrô: *R$ 179,90*`;
 
 /**
  * Extrai informações do produto e preço a partir do nome do arquivo.
- * Exemplo de entrada: "Real-Madrid-Home-24-25_Torcedor_149,90.jpg" ou "borussia-26-27.jpg"
+ * Exemplo de entrada: "Real-Madrid-Home-24-25_Torcedor_149,90.jpg" ou "camiseta_stussy.jpg"
  *
  * @param {string} filename Nome do arquivo
  * @returns {{ title: string, version: string, price: string, hasExplicitPrice: boolean, rawName: string, summary: string }}
@@ -63,29 +63,34 @@ export function parseFilename(filename) {
 
   const hasExplicitPrice = Boolean(price);
 
-  // Identificação inteligente da versão/modelo caso não tenha sido especificado explicitamente
-  const searchContext = `${baseName} ${version}`.toLowerCase();
-  if (!version || version.toLowerCase() === 'torcedor') {
-    if (/\b(jogador|player)\b/i.test(searchContext)) {
-      version = 'Jogador';
-    } else if (/\b(retro|retrô|vintage)\b/i.test(searchContext)) {
-      version = 'Retrô';
-    } else if (/\b(streetwear|street)\b/i.test(searchContext)) {
-      version = 'Streetwear';
-    } else {
-      version = version || 'Torcedor';
-    }
+  // Normaliza o texto substituindo delimitadores (_, -, ., /) por espaços para garantir correspondência precisa
+  const normalizedContext = `${baseName} ${version}`.toLowerCase().replace(/[_\-./]/g, ' ');
+
+  const isStreetwear = /\b(streetwear|street|oversized|camiseta|casual|tee|t-shirt|tshirt|regata|moletom|hoodie|stussy|supreme|trapstar|corteiz|bape|off white|offwhite|balenciaga|palace|vlone|essentials)\b/i.test(normalizedContext);
+  const isJogador = /\b(jogador|player|atleta|authentic)\b/i.test(normalizedContext);
+  const isRetro = /\b(retro|retrô|vintage|classica|clássica)\b/i.test(normalizedContext);
+  const isTorcedor = /\b(torcedor|fan|stadium)\b/i.test(normalizedContext);
+
+  if (isStreetwear) {
+    version = 'Streetwear';
+  } else if (isJogador) {
+    version = 'Jogador';
+  } else if (isRetro) {
+    version = 'Retrô';
+  } else if (isTorcedor) {
+    version = 'Torcedor';
+  } else {
+    version = version || 'Torcedor';
   }
 
   // Se o preço não veio explícito no arquivo, usa a tabela de preços padrão conforme o modelo
   if (!price) {
-    const vLower = version.toLowerCase();
-    if (vLower.includes('jogador') || vLower.includes('player')) {
-      price = DEFAULT_PRICES.jogador;
-    } else if (vLower.includes('retro') || vLower.includes('retrô') || vLower.includes('vintage')) {
-      price = DEFAULT_PRICES.retro;
-    } else if (vLower.includes('street')) {
+    if (version === 'Streetwear') {
       price = DEFAULT_PRICES.streetwear;
+    } else if (version === 'Jogador') {
+      price = DEFAULT_PRICES.jogador;
+    } else if (version === 'Retrô') {
+      price = DEFAULT_PRICES.retro;
     } else {
       price = DEFAULT_PRICES.torcedor;
     }

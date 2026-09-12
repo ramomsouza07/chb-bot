@@ -3,6 +3,28 @@ import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
 import { PRICE_TABLE_TEXT } from '../utils/parser.js';
 
+/**
+ * Garante que camisas streetwear nunca sejam anunciadas com o preço de torcedor (R$ 149)
+ */
+function sanitizeCaption(text, productInfo) {
+  if (!text) return text;
+
+  const isStreetwear = productInfo.version === 'Streetwear';
+
+  if (isStreetwear) {
+    const parts = text.split(/(?:💰\s*\*?Valores:?\*?|Tabela de Valores)/i);
+    if (parts.length >= 2) {
+      let mainDesc = parts[0];
+      const rest = text.slice(mainDesc.length);
+      mainDesc = mainDesc.replace(/(\*?)\s*R\$\s*149(?:[.,]90)?\s*(\*?)/gi, '$1R$ 65,00$2');
+      return mainDesc + rest;
+    } else {
+      return text.replace(/(\*?)\s*R\$\s*149(?:[.,]90)?\s*(\*?)/gi, '$1R$ 65,00$2');
+    }
+  }
+  return text;
+}
+
 class AIService {
   constructor() {
     this.genAI = null;
@@ -44,27 +66,38 @@ class AIService {
     this.init();
 
     const promptText = `
-Você é um vendedor da loja CHB IMPORT (especializada em camisas de futebol e artigos esportivos/streetwear). Crie uma legenda curta, altamente persuasiva, vendedora e com emojis para o WhatsApp baseada na imagem e nos detalhes do produto.
+Você é o copywriter e vendedor oficial da loja CHB IMPORT (especializada em camisas de futebol e camisetas streetwear).
+Crie uma legenda vendedora, persuasiva, empolgante e com emojis para postar no WhatsApp baseada na IMAGEM e nos detalhes do produto.
 
-Dados do produto:
-- Produto/Time: ${productInfo.title}
-- Modelo/Versão: ${productInfo.version}
+DADOS IDENTIFICADOS DO PRODUTO:
+- Nome/Item: ${productInfo.title}
+- Modelo/Categoria: ${productInfo.version}
 - Preço da peça: ${productInfo.price}
 
-Tabela oficial de valores da CHB IMPORT:
-- Camisa de Torcedor: R$ 149,90
-- Camisa de Jogador: R$ 169,99
-- Camisa Retrô: R$ 179,90
-- Camisa Streetwear: R$ 65,00
+TABELA OFICIAL DE VALORES DA LOJA (ESTRITAMENTE OBRIGATÓRIA):
+👕 Camisa Streetwear: R$ 65,00
+⚽ Camisa de Torcedor: R$ 149,90
+⚡ Camisa de Jogador: R$ 169,99
+🏆 Camisa Retrô: R$ 179,90
 
-Diretrizes obrigatórias:
-1. Tom persuasivo, empolgante e amigável (estilo vendedor apaixonado por futebol e streetwear).
-2. É OBRIGATÓRIO incluir na legenda a relação completa com os valores da loja:
+⚠️ ATENÇÃO EXTREMA AOS PREÇOS - REGRA INEGOCIÁVEL:
+1. SE A PEÇA DA IMAGEM FOR STREETWEAR (camiseta casual, oversized, estampa urbana de marcas como Nike casual, Stussy, Supreme, Trapstar, etc.):
+   - O PREÇO DESTA PEÇA É OBRIGATORIAMENTE R$ 65,00!
+   - NUNCA coloque R$ 149,90 para peça streetwear!
+   - O valor de R$ 149,90 é EXCLUSIVO para camisa de time de futebol versão Torcedor!
+   - Destaque no corpo da mensagem: "💰 Por apenas *R$ 65,00*!".
+2. SE A PEÇA DA IMAGEM FOR CAMISA DE TIME DE FUTEBOL:
+   - Modelo Torcedor: *R$ 149,90*
+   - Modelo Jogador: *R$ 169,99*
+   - Modelo Retrô: *R$ 179,90*
+
+DIRETRIZES DA LEGENDA:
+1. Comece com uma chamada animada destacando o produto com emojis (🔥, 👕, ⚡, ⚽).
+2. Destaque o VALOR EXATO da peça que está na foto (se for streetwear, é R$ 65,00; se for futebol torcedor, é R$ 149,90).
+3. Ao final da mensagem, inclua a tabela completa de valores da loja:
 ${PRICE_TABLE_TEXT}
-(Se a peça for um modelo específico, cite o modelo e o valor dela no texto, mas sempre mantenha a tabela completa de valores para os clientes).
-3. Use emojis estratégicos (⚽, 🔥, 🏆, 📦, ⚡, 👕).
-4. Texto conciso, ideal para leitura rápida no WhatsApp (2 a 4 parágrafos curtos).
-5. Inclua uma chamada para ação (Call to Action) forte convidando a chamar no direct/privado para pedir o tamanho e garantir o manto.
+4. Chamada para ação (CTA): convide a chamar no direct/privado para pedir o tamanho e garantir a peça.
+5. Texto conciso (2 a 4 parágrafos curtos) com ótima formatação para WhatsApp.
     `.trim();
 
     logger.info('Enviando imagem e dados do produto para análise no Gemini Vision...');
@@ -77,8 +110,9 @@ ${PRICE_TABLE_TEXT}
         const response = await result.response;
         const text = response.text().trim();
 
+        const cleanText = sanitizeCaption(text, productInfo);
         logger.info('Legenda gerada com sucesso pela IA!');
-        return text;
+        return cleanText;
       } catch (error) {
         logger.warn(`Tentativa ${attempt}/2 falhou no Gemini AI: ${error.message}`);
         if (attempt < 2 && (error.message.includes('503') || error.message.includes('429'))) {
@@ -86,7 +120,9 @@ ${PRICE_TABLE_TEXT}
           await new Promise((r) => setTimeout(r, 2000));
         } else {
           logger.error('Falha definitiva ao gerar legenda com Gemini. Usando legenda padrão da loja.');
-          return `⚽ *CHB IMPORT* ⚽\n\n🔥 *${productInfo.title}*\n👕 Modelo: ${productInfo.version}\n\n${PRICE_TABLE_TEXT}\n\n📦 Garanta já o seu manto no direct! Poucas unidades disponíveis!\n🚀 Enviamos para todo o Brasil!`;
+          const isStreet = productInfo.version === 'Streetwear';
+          const priceDisplay = isStreet ? '💰 Preço: *R$ 65,00*' : `💰 Preço: *${productInfo.price || 'R$ 149,90'}*`;
+          return `⚽ *CHB IMPORT* ⚽\n\n🔥 *${productInfo.title}*\n👕 Modelo: ${productInfo.version}\n${priceDisplay}\n\n${PRICE_TABLE_TEXT}\n\n📦 Garanta já a sua peça no direct! Poucas unidades disponíveis!\n🚀 Enviamos para todo o Brasil!`;
         }
       }
     }
