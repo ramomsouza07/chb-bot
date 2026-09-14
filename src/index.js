@@ -2,13 +2,13 @@ import { validateConfig, config } from './config/index.js';
 import { prisma } from './database/prisma.js';
 import { whatsappService } from './services/whatsappService.js';
 import { runAutomationWorkflow } from './workflow.js';
-import { createServer } from './server.js';
+import { server } from './server.js';
 import { startScheduler, stopScheduler } from './scheduler.js';
 import { logger } from './utils/logger.js';
 
 async function main() {
   logger.info('==================================================');
-  logger.info('🔥 INICIANDO CHB IMPORT BOT (BAILEYS + NEON + RENDER) 🔥');
+  logger.info('🔥 INICIANDO CHB IMPORT BOT (BAILEYS + NEON + RENDER / VERCEL) 🔥');
   logger.info('==================================================');
 
   // 1. Modo de simulação local rápida via CLI (--dry-run)
@@ -23,12 +23,10 @@ async function main() {
     return;
   }
 
-  // 2. Inicializa o Servidor Express (Essencial para o Dashboard Web, Render e Keep-Awake)
-  const app = createServer();
-  const server = app.listen(config.server.port, () => {
-    logger.info(`🌐 Servidor Express ativo na porta ${config.server.port}`);
-    logger.info(`👉 Acesse o Dashboard em: http://localhost:${config.server.port}`);
-  });
+  // 2. Servidor Express (iniciado automaticamente em server.js para suportar Vercel, Render e Local)
+  if (server) {
+    logger.info(`🌐 Servidor Express ativo e pronto para Dashboard Web e requisições`);
+  }
 
   // 3. Validação de variáveis de ambiente e arquivos
   let isConfigured = false;
@@ -71,7 +69,9 @@ async function main() {
   const shutdown = async (signal) => {
     logger.info(`Sinal [${signal}] recebido. Desligando servidor e desconectando serviços...`);
     stopScheduler();
-    server.close();
+    if (server) {
+      server.close();
+    }
     if (isConfigured) {
       await prisma.$disconnect().catch(() => {});
     }

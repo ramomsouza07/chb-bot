@@ -314,3 +314,20 @@ export function createServer() {
 
   return app;
 }
+
+// Instância principal do Express
+export const app = createServer();
+
+// Porta do servidor (Vercel injeta process.env.PORT automaticamente)
+const PORT = process.env.PORT || config.server?.port || 3000;
+const shouldListen = !process.argv.includes('--dry-run') && process.env.NODE_ENV !== 'test';
+
+// Inicializa o listener HTTP (necessário para detecção do Vercel e execução direta)
+export const server = shouldListen
+  ? app.listen(PORT, () => {
+      logger.info(`🌐 Servidor Express ativo na porta ${PORT}`);
+      logger.info(`👉 Acesse o Dashboard em: http://localhost:${PORT}`);
+    })
+  : null;
+
+export default app;
