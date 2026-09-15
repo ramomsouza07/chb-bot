@@ -1,6 +1,7 @@
 import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
+  Browsers,
 } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import qrcodeTerminal from 'qrcode-terminal';
@@ -44,12 +45,17 @@ class WhatsAppService {
       this.clearSession = clearSession;
 
       let version;
+      let versionTimeoutId;
       try {
         const vPromise = fetchLatestBaileysVersion();
-        const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Version timeout')), 2500));
+        const timeout = new Promise((_, reject) => {
+          versionTimeoutId = setTimeout(() => reject(new Error('Version timeout')), 2500);
+        });
         const res = await Promise.race([vPromise, timeout]);
+        if (versionTimeoutId) clearTimeout(versionTimeoutId);
         version = res.version;
       } catch (e) {
+        if (versionTimeoutId) clearTimeout(versionTimeoutId);
         logger.warn('Não foi possível obter versão do Baileys via rede rápida, usando versão padrão estável.');
         version = [2, 3000, 1015901307];
       }
@@ -61,7 +67,7 @@ class WhatsAppService {
         auth: state,
         logger: pino({ level: 'silent' }),
         printQRInTerminal: false,
-        browser: ['CHB IMPORT', 'Chrome', '1.0.0'],
+        browser: Browsers.ubuntu('Chrome'),
         connectTimeoutMs: 25000,
         keepAliveIntervalMs: 25000,
       });
@@ -92,7 +98,9 @@ class WhatsAppService {
         }
 
         if (connection === 'connecting') {
-          this.status = 'connecting';
+          if (this.status !== 'waiting_qr' && !this.qrDataUrl) {
+            this.status = 'connecting';
+          }
           logger.info('Estabelecendo conexão com o WhatsApp...');
         }
 
@@ -101,6 +109,7 @@ class WhatsAppService {
           this.qrRaw = null;
           this.qrDataUrl = null;
           this.lastConnected = new Date();
+          this.lastError = null;
           this.botNumber = this.sock.user?.id ? this.sock.user.id.split(':')[0] : 'Conectado';
 
           logger.info(`✅ 🤖 Baileys WhatsApp CONECTADO COM SUCESSO! (Número: ${this.botNumber})`);
@@ -111,6 +120,8 @@ class WhatsAppService {
 
         if (connection === 'close') {
           this.status = 'disconnected';
+          this.qrRaw = null;
+          this.qrDataUrl = null;
           const error = lastDisconnect?.error;
           const statusCode = error instanceof Boom ? error.output?.statusCode : null;
           const reason = DisconnectReason[statusCode] || 'Desconhecido';
@@ -118,16 +129,26 @@ class WhatsAppService {
           logger.warn(`Conexão do WhatsApp fechada. Código: ${statusCode} (${reason}).`);
 
           const isLoggedOut = statusCode === DisconnectReason.loggedOut;
-          if (isLoggedOut) {
-            logger.warn('A sessão foi desconectada pelo aparelho. Limpando chaves no banco de dados...');
-            await this.clearSession();
+          const isBadSession = statusCode === DisconnectReason.badSession;
+          const isMismatch = statusCode === DisconnectReason.multideviceMismatch;
+          if (isLoggedOut || isBadSession || isMismatch) {
+            logger.warn('Sessão desconectada ou inválida. Limpando chaves no banco de dados...');
+            if (this.clearSession) {
+              await this.clearSession().catch((e) => logger.error('Erro ao limpar sessão:', e.message));
+            }
           }
+
+          try {
+            this.sock?.ev?.removeAllListeners();
+          } catch (e) {}
 
           // Reconecta automaticamente após breve intervalo
           logger.info('Tentando restabelecer conexão em 4 segundos...');
           setTimeout(() => {
             this._isInitializing = false;
-            this.initialize();
+            this.initialize().catch((err) => {
+              logger.error('Erro na reconexão automática:', err.message);
+            });
           }, 4000);
         }
       });
@@ -138,6 +159,11 @@ class WhatsAppService {
       this.lastError = err.message;
       this._isInitializing = false;
       logger.error('Erro crítico ao inicializar Baileys:', err.message);
+      setTimeout(() => {
+        if (this.status === 'error') {
+          this.status = 'disconnected';
+        }
+      }, 5000);
       throw err;
     }
   }
@@ -151,7 +177,7 @@ class WhatsAppService {
     if (this.status === 'online') {
       return { status: 'online' };
     }
-    if (this.status === 'waiting_qr' && this.qrDataUrl) {
+    if (this.qrDataUrl) {
       return { status: 'waiting_qr', qrDataUrl: this.qrDataUrl };
     }
 
@@ -169,7 +195,7 @@ class WhatsAppService {
         if (this.status === 'online') {
           return finish({ status: 'online' });
         }
-        if (this.status === 'waiting_qr' && this.qrDataUrl) {
+        if (this.qrDataUrl) {
           return finish({ status: 'waiting_qr', qrDataUrl: this.qrDataUrl });
         }
         if (this.status === 'error') {
@@ -177,7 +203,7 @@ class WhatsAppService {
         }
       };
 
-      interval = setInterval(check, 250);
+      interval = setInterval(check, 150);
       timer = setTimeout(() => {
         finish({
           status: this.status,
@@ -187,6 +213,34 @@ class WhatsAppService {
         });
       }, timeoutMs);
 
+      check();
+    });
+  }
+
+  /**
+   * Aguarda ativamente até a conexão ficar online (ou expirar o timeout)
+   * Útil para manter o processo ativo enquanto o usuário escaneia o QR Code
+   * @param {number} timeoutMs
+   */
+  async waitForOnline(timeoutMs = 2500) {
+    if (this.status === 'online') return true;
+
+    return new Promise((resolve) => {
+      let timer = null;
+      let interval = null;
+
+      const finish = (val) => {
+        if (timer) clearTimeout(timer);
+        if (interval) clearInterval(interval);
+        resolve(val);
+      };
+
+      const check = () => {
+        if (this.status === 'online') finish(true);
+      };
+
+      interval = setInterval(check, 150);
+      timer = setTimeout(() => finish(this.status === 'online'), timeoutMs);
       check();
     });
   }
