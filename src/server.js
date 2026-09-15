@@ -306,6 +306,9 @@ export function createServer() {
     async function updateStatus() {
       try {
         const res = await fetch('/api/status');
+        if (!res.ok) return;
+        const contentType = res.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) return;
         const data = await res.json();
 
         // Elementos da UI
@@ -376,7 +379,14 @@ export function createServer() {
 
       try {
         const res = await fetch('/api/connect', { method: 'POST' });
-        const data = await res.json();
+        const contentType = res.headers.get('content-type') || '';
+        
+        let data;
+        if (contentType.includes('application/json')) {
+          data = await res.json();
+        } else {
+          throw new Error('A rota retornou status HTTP ' + res.status + ' (' + res.statusText + ').');
+        }
 
         if (!data.success && data.error) {
           if (feedback) {
@@ -465,7 +475,8 @@ export const app = createServer();
 
 // Porta do servidor (Vercel injeta process.env.PORT automaticamente)
 const PORT = process.env.PORT || config.server?.port || 3000;
-const shouldListen = !process.argv.includes('--dry-run') && process.env.NODE_ENV !== 'test';
+const isVercel = Boolean(process.env.VERCEL);
+const shouldListen = !isVercel && !process.argv.includes('--dry-run') && process.env.NODE_ENV !== 'test';
 
 // Inicializa o listener HTTP (necessário para detecção do Vercel e execução direta)
 export const server = shouldListen
