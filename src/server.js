@@ -32,8 +32,8 @@ export function createServer() {
       });
     }
 
-    if (req.query.wait === 'true' && whatsappService.status !== 'online') {
-      await whatsappService.waitForQrOrOnline(5000);
+    if (req.query.wait === 'true' && whatsappService.status !== 'online' && !whatsappService.qrDataUrl) {
+      await whatsappService.waitForQrOrOnline(2000);
     }
 
     const wa = whatsappService.getStatus();
@@ -50,8 +50,8 @@ export function createServer() {
     });
   });
 
-  // Conexão manual e emissão de QR Code (vital para Vercel manter o lambda acordado durante o handshake)
-  app.post('/api/connect', async (req, res) => {
+  // Conexão e emissão de QR Code (suporta GET e POST para compatibilidade total)
+  app.all(['/api/connect', '/api/connect-wa'], async (req, res) => {
     logger.info('[API] Solicitação de conexão com WhatsApp recebida.');
     try {
       if (!process.env.DATABASE_URL) {
@@ -67,8 +67,8 @@ export function createServer() {
         });
       }
 
-      // Aguarda ativamente até 14 segundos para entregar o QR Code na mesma resposta HTTP
-      const result = await whatsappService.waitForQrOrOnline(14000);
+      // Aguarda no máximo 3 segundos para responder com rapidez sem exceder o tempo limite do Vercel
+      const result = await whatsappService.waitForQrOrOnline(3000);
       res.json({
         success: result.status !== 'error',
         ...result,
@@ -369,16 +369,20 @@ export function createServer() {
 
       if (btn) {
         btn.disabled = true;
-        btn.innerHTML = '⏳ Conectando e gerando QR Code...';
+        btn.innerHTML = '⏳ Conectando ao WhatsApp...';
       }
       if (feedback) {
         feedback.className = 'text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 py-2 px-4 rounded-lg inline-block';
-        feedback.textContent = 'Inicializando Baileys e solicitando QR Code ao WhatsApp... (pode levar alguns segundos)';
+        feedback.textContent = 'Iniciando conexão Baileys... Aguarde o QR Code.';
         feedback.classList.remove('hidden');
       }
 
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+
       try {
-        const res = await fetch('/api/connect', { method: 'POST' });
+        const res = await fetch('/api/connect', { method: 'POST', signal: controller.signal });
+        clearTimeout(timeoutId);
         const contentType = res.headers.get('content-type') || '';
         
         let data;
@@ -409,13 +413,20 @@ export function createServer() {
             feedback.className = 'text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 py-2 px-4 rounded-lg inline-block';
             feedback.textContent = '✅ WhatsApp conectado com sucesso!';
           }
+        } else {
+          if (feedback) {
+            feedback.className = 'text-xs text-blue-300 bg-blue-500/10 border border-blue-500/20 py-2 px-4 rounded-lg inline-block';
+            feedback.textContent = '⏳ Baileys iniciado! Aguardando o WhatsApp enviar o QR Code...';
+          }
         }
-        updateStatus();
+        await updateStatus();
       } catch (err) {
+        clearTimeout(timeoutId);
         if (feedback) {
-          feedback.className = 'text-xs text-rose-300 bg-rose-500/10 border border-rose-500/20 py-2 px-4 rounded-lg inline-block';
-          feedback.textContent = 'Erro de comunicação com o servidor: ' + err.message;
+          feedback.className = 'text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 py-2 px-4 rounded-lg inline-block';
+          feedback.textContent = 'Conexão disparada! Aguardando emissão do QR Code pelo WhatsApp...';
         }
+        await updateStatus();
       } finally {
         if (btn) {
           btn.disabled = false;
@@ -457,8 +468,22 @@ export function createServer() {
       }
     }
 
-    // Polling a cada 4 segundos
-    setInterval(updateStatus, 4000);
+    // Polling sequencial protegido contra acúmulo de requisições pendentes
+    let isPollingActive = false;
+    async function pollLoop() {
+      if (!isPollingActive) {
+        isPollingActive = true;
+        try {
+          await updateStatus();
+        } catch (err) {
+          // ignora erro pontual de rede no polling
+        } finally {
+          isPollingActive = false;
+        }
+      }
+      setTimeout(pollLoop, 3000);
+    }
+    setTimeout(pollLoop, 1000);
   </script>
 </body>
 </html>

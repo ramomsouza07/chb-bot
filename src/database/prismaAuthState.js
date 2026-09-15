@@ -32,11 +32,15 @@ export async function usePrismaAuthState(sessionId = 'chb-bot') {
 
   const readData = async (key) => {
     try {
-      const row = await prisma.session.findUnique({
+      const queryPromise = prisma.session.findUnique({
         where: {
           sessionId_key: { sessionId, key },
         },
       });
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Timeout de consulta ao banco (4s)')), 4000)
+      );
+      const row = await Promise.race([queryPromise, timeoutPromise]);
 
       if (!row || !row.value) return null;
       return JSON.parse(row.value, BufferJSON.reviver);

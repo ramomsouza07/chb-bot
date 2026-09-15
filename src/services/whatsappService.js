@@ -43,7 +43,17 @@ class WhatsAppService {
       const { state, saveCreds, clearSession } = await usePrismaAuthState(config.whatsapp.sessionId);
       this.clearSession = clearSession;
 
-      const { version } = await fetchLatestBaileysVersion();
+      let version;
+      try {
+        const vPromise = fetchLatestBaileysVersion();
+        const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Version timeout')), 2500));
+        const res = await Promise.race([vPromise, timeout]);
+        version = res.version;
+      } catch (e) {
+        logger.warn('Não foi possível obter versão do Baileys via rede rápida, usando versão padrão estável.');
+        version = [2, 3000, 1015901307];
+      }
+
       logger.info(`Conectando ao WhatsApp via Baileys (versão WA: ${version.join('.')})...`);
 
       this.sock = makeWASocket({
@@ -52,7 +62,7 @@ class WhatsAppService {
         logger: pino({ level: 'silent' }),
         printQRInTerminal: false,
         browser: ['CHB IMPORT', 'Chrome', '1.0.0'],
-        connectTimeoutMs: 60000,
+        connectTimeoutMs: 25000,
         keepAliveIntervalMs: 25000,
       });
 
@@ -137,7 +147,7 @@ class WhatsAppService {
    * Essencial em ambientes serverless como Vercel para evitar que o processo congele antes do QR chegar
    * @param {number} timeoutMs Tempo máximo de espera em milissegundos
    */
-  async waitForQrOrOnline(timeoutMs = 12000) {
+  async waitForQrOrOnline(timeoutMs = 3500) {
     if (this.status === 'online') {
       return { status: 'online' };
     }
@@ -167,12 +177,13 @@ class WhatsAppService {
         }
       };
 
-      interval = setInterval(check, 300);
+      interval = setInterval(check, 250);
       timer = setTimeout(() => {
         finish({
           status: this.status,
           qrDataUrl: this.qrDataUrl,
-          error: this.lastError || (this.status === 'disconnected' ? 'Tempo limite atingido aguardando o QR Code da rede do WhatsApp' : null),
+          message: this.status === 'connecting' ? 'Conexão em andamento com WhatsApp... Aguarde o QR Code.' : null,
+          error: this.lastError,
         });
       }, timeoutMs);
 
