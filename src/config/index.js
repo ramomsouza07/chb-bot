@@ -6,6 +6,67 @@ dotenv.config();
 
 const requiredEnv = ['GEMINI_API_KEY', 'GOOGLE_DRIVE_FOLDER_ID', 'DATABASE_URL'];
 
+export function getGoogleCredentials() {
+  // 1. Variável GOOGLE_CREDENTIALS_JSON (direto em JSON ou base64)
+  let rawJson = process.env.GOOGLE_CREDENTIALS_JSON;
+
+  // 2. Se GOOGLE_APPLICATION_CREDENTIALS for o próprio conteúdo JSON
+  if (!rawJson && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    const val = process.env.GOOGLE_APPLICATION_CREDENTIALS.trim();
+    if (val.startsWith('{') && val.endsWith('}')) {
+      rawJson = val;
+    }
+  }
+
+  if (rawJson) {
+    let str = rawJson.trim();
+    if (!str.startsWith('{')) {
+      try {
+        str = Buffer.from(str, 'base64').toString('utf8');
+      } catch (e) {}
+    }
+    try {
+      const parsed = JSON.parse(str);
+      if (parsed.private_key) {
+        parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
+      }
+      return parsed;
+    } catch (err) {
+      console.warn('[Config] Erro ao interpretar GOOGLE_CREDENTIALS_JSON:', err.message);
+    }
+  }
+
+  // 3. Chaves individuais
+  if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
+    return {
+      client_email: process.env.GOOGLE_CLIENT_EMAIL,
+      private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+    };
+  }
+
+  // 4. Arquivo no disco (se existir)
+  const candidatePaths = [
+    process.env.GOOGLE_APPLICATION_CREDENTIALS,
+    path.resolve(process.cwd(), './credentials.json'),
+    '/tmp/credentials.json',
+  ].filter(Boolean);
+
+  for (const p of candidatePaths) {
+    try {
+      if (fs.existsSync(p)) {
+        const content = fs.readFileSync(p, 'utf8');
+        const parsed = JSON.parse(content);
+        if (parsed.private_key) {
+          parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
+        }
+        return parsed;
+      }
+    } catch (e) {}
+  }
+
+  return null;
+}
+
 export function validateConfig() {
   const missing = requiredEnv.filter((key) => !process.env[key]);
   if (missing.length > 0) {
@@ -14,25 +75,11 @@ export function validateConfig() {
     );
   }
 
-  // Se fornecido JSON de credenciais direto na variável de ambiente (ideal para Render)
-  if (process.env.GOOGLE_CREDENTIALS_JSON) {
-    const credsPath = path.resolve(process.cwd(), './credentials.json');
-    if (!fs.existsSync(credsPath)) {
-      try {
-        fs.writeFileSync(credsPath, process.env.GOOGLE_CREDENTIALS_JSON, 'utf8');
-      } catch (err) {
-        logger.warn('Não foi possível gravar credentials.json a partir do GOOGLE_CREDENTIALS_JSON:', err.message);
-      }
-    }
-  }
-
-  // Verifica se o arquivo de credenciais do Google existe
-  const credsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS || './credentials.json';
-  const resolvedCredsPath = path.resolve(process.cwd(), credsPath);
-  if (!fs.existsSync(resolvedCredsPath)) {
+  const creds = getGoogleCredentials();
+  if (!creds) {
     throw new Error(
-      `[Config] Arquivo de credenciais da Service Account do Google não foi encontrado em: ${resolvedCredsPath}.\n` +
-      `Coloque o arquivo credentials.json na raiz do projeto ou configure GOOGLE_CREDENTIALS_JSON no .env.`
+      `[Config] Credenciais do Google Drive não configuradas.\n` +
+      `Configure a variável GOOGLE_CREDENTIALS_JSON no seu painel de deploy (Vercel ou Render) com o conteúdo do arquivo credentials.json.`
     );
   }
 }
@@ -49,6 +96,7 @@ export const config = {
     model: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
   },
   drive: {
+    getCredentials: getGoogleCredentials,
     credentialsPath: path.resolve(
       process.cwd(),
       process.env.GOOGLE_APPLICATION_CREDENTIALS || './credentials.json'

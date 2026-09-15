@@ -46,7 +46,10 @@ async function checkSetup() {
   // 4. Teste do Google Drive
   console.log('\n--- [3/3] Testando Google Drive API ---');
   try {
-    const creds = JSON.parse(fs.readFileSync(config.drive.credentialsPath, 'utf8'));
+    const creds = config.drive.getCredentials ? config.drive.getCredentials() : null;
+    if (!creds) {
+      throw new Error('Credenciais do Google Drive não encontradas em credentials.json nem em GOOGLE_CREDENTIALS_JSON.');
+    }
     logger.info(`Conta de Serviço: ${creds.client_email}`);
 
     const file = await driveService.getRandomImage();

@@ -49,6 +49,7 @@ export function createServer() {
       hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
       hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
       hasDriveFolder: Boolean(process.env.GOOGLE_DRIVE_FOLDER_ID),
+      hasGoogleCreds: Boolean(config.drive.getCredentials ? config.drive.getCredentials() : false),
       cronSchedule: config.cron.schedule,
       timezone: config.cron.timezone,
     });

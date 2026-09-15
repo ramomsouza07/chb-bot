@@ -15,13 +15,20 @@ class DriveService {
     if (this.drive) return this.drive;
 
     try {
+      const credentials = config.drive.getCredentials ? config.drive.getCredentials() : null;
+      if (!credentials) {
+        throw new Error(
+          'Credenciais do Google Drive não encontradas. Adicione a variável GOOGLE_CREDENTIALS_JSON no painel do seu deploy (Vercel/Render) com o conteúdo completo do seu credentials.json.'
+        );
+      }
+
       const auth = new google.auth.GoogleAuth({
-        keyFile: config.drive.credentialsPath,
+        credentials,
         scopes: ['https://www.googleapis.com/auth/drive'],
       });
 
       this.drive = google.drive({ version: 'v3', auth });
-      logger.info('Google Drive Service autenticado com sucesso.');
+      logger.info('Google Drive Service autenticado com sucesso via Service Account.');
       return this.drive;
     } catch (error) {
       logger.error('Erro ao autenticar com o Google Drive:', error.message);
