@@ -23,6 +23,7 @@ class WhatsAppService {
     this._onlinePromise = null;
     this._resolveOnline = null;
     this._isInitializing = false;
+    this.lastError = null;
   }
 
   /**
@@ -31,6 +32,7 @@ class WhatsAppService {
   async initialize() {
     if (this._isInitializing) return this._onlinePromise;
     this._isInitializing = true;
+    this.lastError = null;
 
     this._onlinePromise = new Promise((resolve) => {
       this._resolveOnline = resolve;
@@ -123,10 +125,59 @@ class WhatsAppService {
       return this._onlinePromise;
     } catch (err) {
       this.status = 'error';
+      this.lastError = err.message;
       this._isInitializing = false;
       logger.error('Erro crítico ao inicializar Baileys:', err.message);
       throw err;
     }
+  }
+
+  /**
+   * Aguarda ativamente até obter o QR Code gerado ou estabelecer conexão online
+   * Essencial em ambientes serverless como Vercel para evitar que o processo congele antes do QR chegar
+   * @param {number} timeoutMs Tempo máximo de espera em milissegundos
+   */
+  async waitForQrOrOnline(timeoutMs = 12000) {
+    if (this.status === 'online') {
+      return { status: 'online' };
+    }
+    if (this.status === 'waiting_qr' && this.qrDataUrl) {
+      return { status: 'waiting_qr', qrDataUrl: this.qrDataUrl };
+    }
+
+    return new Promise((resolve) => {
+      let timer = null;
+      let interval = null;
+
+      const finish = (result) => {
+        if (timer) clearTimeout(timer);
+        if (interval) clearInterval(interval);
+        resolve(result);
+      };
+
+      const check = () => {
+        if (this.status === 'online') {
+          return finish({ status: 'online' });
+        }
+        if (this.status === 'waiting_qr' && this.qrDataUrl) {
+          return finish({ status: 'waiting_qr', qrDataUrl: this.qrDataUrl });
+        }
+        if (this.status === 'error') {
+          return finish({ status: 'error', error: this.lastError });
+        }
+      };
+
+      interval = setInterval(check, 300);
+      timer = setTimeout(() => {
+        finish({
+          status: this.status,
+          qrDataUrl: this.qrDataUrl,
+          error: this.lastError || (this.status === 'disconnected' ? 'Tempo limite atingido aguardando o QR Code da rede do WhatsApp' : null),
+        });
+      }, timeoutMs);
+
+      check();
+    });
   }
 
   /**
@@ -204,6 +255,8 @@ class WhatsAppService {
       groupName: config.whatsapp.groupName,
       lastConnected: this.lastConnected,
       qrDataUrl: this.qrDataUrl,
+      lastError: this.lastError,
+      isInitializing: this._isInitializing,
     };
   }
 }

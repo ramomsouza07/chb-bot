@@ -20,16 +20,62 @@ export function createServer() {
   });
 
   // API de status em tempo real (consumida pelo frontend para polling sem recarregar)
-  app.get('/api/status', (req, res) => {
+  app.get('/api/status', async (req, res) => {
+    // Tenta inicialização automática se o banco estiver configurado
+    if (
+      whatsappService.status === 'disconnected' &&
+      !whatsappService._isInitializing &&
+      process.env.DATABASE_URL
+    ) {
+      whatsappService.initialize().catch((err) => {
+        logger.error('Erro no auto-start do WhatsApp via /api/status:', err.message);
+      });
+    }
+
+    if (req.query.wait === 'true' && whatsappService.status !== 'online') {
+      await whatsappService.waitForQrOrOnline(5000);
+    }
+
     const wa = whatsappService.getStatus();
     const stats = getWorkflowStats();
 
     res.json({
       ...wa,
       ...stats,
+      hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
+      hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
+      hasDriveFolder: Boolean(process.env.GOOGLE_DRIVE_FOLDER_ID),
       cronSchedule: config.cron.schedule,
       timezone: config.cron.timezone,
     });
+  });
+
+  // Conexão manual e emissão de QR Code (vital para Vercel manter o lambda acordado durante o handshake)
+  app.post('/api/connect', async (req, res) => {
+    logger.info('[API] Solicitação de conexão com WhatsApp recebida.');
+    try {
+      if (!process.env.DATABASE_URL) {
+        return res.status(400).json({
+          success: false,
+          error: 'A variável de ambiente DATABASE_URL não está configurada no Vercel. O Baileys precisa da URL do PostgreSQL (Neon) para salvar a sessão.',
+        });
+      }
+
+      if (whatsappService.status !== 'online' && !whatsappService._isInitializing) {
+        whatsappService.initialize().catch((err) => {
+          logger.error('Erro ao conectar WhatsApp:', err.message);
+        });
+      }
+
+      // Aguarda ativamente até 14 segundos para entregar o QR Code na mesma resposta HTTP
+      const result = await whatsappService.waitForQrOrOnline(14000);
+      res.json({
+        success: result.status !== 'error',
+        ...result,
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   // Disparo manual imediato
@@ -123,6 +169,27 @@ export function createServer() {
   <!-- Main Content -->
   <main class="flex-1 max-w-6xl w-full mx-auto px-4 py-8 space-y-6">
     
+    <!-- Alerta / Ação de Conexão (quando desconectado ou em erro) -->
+    <div id="connect-section" class="${wa.status !== 'online' && wa.status !== 'waiting_qr' ? 'block' : 'hidden'} bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl text-center space-y-4">
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-800 text-slate-300 text-sm font-medium border border-slate-700">
+        📱 Conexão com WhatsApp
+      </div>
+      <h2 class="text-2xl font-bold text-white">Bot WhatsApp Desconectado</h2>
+      <p id="connect-hint" class="text-sm text-slate-400 max-w-xl mx-auto">
+        ${!process.env.DATABASE_URL
+          ? '<span class="text-amber-400 font-semibold">⚠️ Configuração Pendente:</span> A variável <code>DATABASE_URL</code> (PostgreSQL Neon) não foi detectada. Adicione-a nas variáveis de ambiente do seu projeto no Vercel/Render para salvar a sessão.'
+          : (wa.lastError ? '<span class="text-rose-400 font-semibold">Erro anterior:</span> ' + wa.lastError : 'Clique no botão abaixo para inicializar o Baileys e gerar o QR Code de autenticação:')}
+      </p>
+      <div class="flex justify-center items-center gap-3 pt-2">
+        <button id="btn-connect-wa" onclick="connectWhatsApp()" class="px-6 py-3 rounded-xl text-sm font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/30 transition inline-flex items-center gap-2">
+          ⚡ Conectar e Gerar QR Code
+        </button>
+      </div>
+      <div>
+        <span id="wa-feedback" class="hidden text-xs py-2 px-4 rounded-lg inline-block"></span>
+      </div>
+    </div>
+
     <!-- Alerta de QR Code (se necessário autenticar) -->
     <div id="qr-section" class="${wa.status === 'waiting_qr' ? 'block' : 'hidden'} bg-slate-900 border-2 border-amber-500/50 rounded-2xl p-6 shadow-xl text-center space-y-4">
       <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 text-sm font-medium border border-amber-500/20">
@@ -136,6 +203,11 @@ export function createServer() {
         <div class="p-4 bg-white rounded-2xl shadow-2xl inline-block">
           <img id="qr-img" src="${wa.qrDataUrl || ''}" alt="QR Code WhatsApp" class="w-64 h-64 mx-auto rounded-lg" />
         </div>
+      </div>
+      <div class="flex justify-center items-center gap-3">
+        <button onclick="connectWhatsApp()" class="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition flex items-center gap-1.5">
+          🔄 Atualizar QR Code
+        </button>
       </div>
       <p class="text-xs text-slate-500">A sessão será salva automaticamente no banco Neon.tech. Você só precisará conectar uma vez!</p>
     </div>
@@ -236,26 +308,42 @@ export function createServer() {
         const res = await fetch('/api/status');
         const data = await res.json();
 
-        // Atualiza Badge
+        // Elementos da UI
         const badge = document.getElementById('badge-status');
         const qrSection = document.getElementById('qr-section');
         const qrImg = document.getElementById('qr-img');
+        const connectSection = document.getElementById('connect-section');
+        const connectHint = document.getElementById('connect-hint');
 
         if (data.status === 'online') {
           badge.className = 'px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider flex items-center gap-2 shadow-sm bg-emerald-500 text-white';
           badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-white animate-pulse"></span> Online e Conectado';
           qrSection.classList.add('hidden');
+          connectSection.classList.add('hidden');
         } else if (data.status === 'waiting_qr') {
           badge.className = 'px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider flex items-center gap-2 shadow-sm bg-amber-500 text-white';
           badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-white animate-pulse"></span> Aguardando QR Code';
           qrSection.classList.remove('hidden');
+          connectSection.classList.add('hidden');
           if (data.qrDataUrl) {
             qrImg.src = data.qrDataUrl;
           }
+        } else if (data.status === 'connecting') {
+          badge.className = 'px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider flex items-center gap-2 shadow-sm bg-blue-500 text-white';
+          badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-white animate-pulse"></span> Conectando ao WhatsApp...';
+          qrSection.classList.add('hidden');
+          connectSection.classList.remove('hidden');
         } else {
           badge.className = 'px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider flex items-center gap-2 shadow-sm bg-rose-500 text-white';
           badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-white"></span> ' + (data.status || 'Desconectado');
           qrSection.classList.add('hidden');
+          connectSection.classList.remove('hidden');
+
+          if (!data.hasDatabaseUrl) {
+            connectHint.innerHTML = '<span class="text-amber-400 font-semibold">⚠️ Configuração Pendente:</span> A variável <code>DATABASE_URL</code> (PostgreSQL Neon) não foi detectada. Adicione-a nas variáveis de ambiente do seu deploy na Vercel/Render para salvar a sessão.';
+          } else if (data.lastError) {
+            connectHint.innerHTML = '<span class="text-rose-400 font-semibold">Erro ao conectar:</span> ' + data.lastError;
+          }
         }
 
         if (data.lastProductName) {
@@ -266,6 +354,63 @@ export function createServer() {
         }
       } catch (err) {
         console.error('Erro ao buscar status:', err);
+      }
+    }
+
+    async function connectWhatsApp() {
+      const btn = document.getElementById('btn-connect-wa');
+      const feedback = document.getElementById('wa-feedback');
+      const qrSection = document.getElementById('qr-section');
+      const qrImg = document.getElementById('qr-img');
+      const connectSection = document.getElementById('connect-section');
+
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Conectando e gerando QR Code...';
+      }
+      if (feedback) {
+        feedback.className = 'text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 py-2 px-4 rounded-lg inline-block';
+        feedback.textContent = 'Inicializando Baileys e solicitando QR Code ao WhatsApp... (pode levar alguns segundos)';
+        feedback.classList.remove('hidden');
+      }
+
+      try {
+        const res = await fetch('/api/connect', { method: 'POST' });
+        const data = await res.json();
+
+        if (!data.success && data.error) {
+          if (feedback) {
+            feedback.className = 'text-xs text-rose-300 bg-rose-500/10 border border-rose-500/20 py-2 px-4 rounded-lg inline-block';
+            feedback.textContent = '❌ ' + data.error;
+          }
+        } else if (data.qrDataUrl) {
+          if (qrImg && qrSection) {
+            qrImg.src = data.qrDataUrl;
+            qrSection.classList.remove('hidden');
+          }
+          if (connectSection) {
+            connectSection.classList.add('hidden');
+          }
+          if (feedback) {
+            feedback.classList.add('hidden');
+          }
+        } else if (data.status === 'online') {
+          if (feedback) {
+            feedback.className = 'text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 py-2 px-4 rounded-lg inline-block';
+            feedback.textContent = '✅ WhatsApp conectado com sucesso!';
+          }
+        }
+        updateStatus();
+      } catch (err) {
+        if (feedback) {
+          feedback.className = 'text-xs text-rose-300 bg-rose-500/10 border border-rose-500/20 py-2 px-4 rounded-lg inline-block';
+          feedback.textContent = 'Erro de comunicação com o servidor: ' + err.message;
+        }
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '⚡ Conectar e Gerar QR Code';
+        }
       }
     }
 
@@ -329,5 +474,13 @@ export const server = shouldListen
       logger.info(`👉 Acesse o Dashboard em: http://localhost:${PORT}`);
     })
   : null;
+
+// Auto-iniciar conexão com o WhatsApp se DATABASE_URL estiver configurado
+if (process.env.DATABASE_URL && !process.argv.includes('--dry-run') && process.env.NODE_ENV !== 'test') {
+  logger.info('[Server] DATABASE_URL detectada. Inicializando Baileys WhatsApp...');
+  whatsappService.initialize().catch((err) => {
+    logger.error('[Server] Erro ao auto-inicializar WhatsApp:', err.message);
+  });
+}
 
 export default app;
